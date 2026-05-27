@@ -13,6 +13,17 @@ import 'react-toastify/dist/ReactToastify.css';
 // Init native bridge + OTA
 initCapacitor().then(() => initOTAUpdater());
 
+// Register service worker for background notifications
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/reminder-sw.js')
+    .then((registration) => {
+      console.log('Reminder Service Worker registered:', registration);
+    })
+    .catch((error) => {
+      console.log('Service Worker registration failed:', error);
+    });
+}
+
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>

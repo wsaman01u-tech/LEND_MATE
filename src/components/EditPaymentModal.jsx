@@ -11,23 +11,30 @@ export default function EditPaymentModal({ payment, borrowerId, onClose, onSaved
     return v?.toDate?.()?.toISOString?.()?.slice(0, 10) || '';
   };
 
-  const [amount, setAmount] = useState(String(payment.amount || ''));
-  const [collectedDate, setCollectedDate] = useState(resolveDate(payment.collectedDate || payment.paidDate || payment.paidAt));
+  const [amount, setAmount] = useState(String(payment.amount || payment.paidAmount || ''));
+  const [collectedDate, setCollectedDate] = useState(resolveDate(payment.collectedDate || payment.actualCollectionDate || payment.paidDate || payment.paidAt));
+  const [emiDueDate, setEmiDueDate] = useState(resolveDate(payment.emiDueDate || payment.dueDate));
   const [notes, setNotes] = useState(payment.notes || '');
   const [busy, setBusy] = useState(false);
 
-  const dueDate = payment.dueDate || payment.paidDate;
-  const isAdvance = collectedDate && dueDate && collectedDate < dueDate;
+  const isAdvance = collectedDate && emiDueDate && collectedDate < emiDueDate;
 
   const save = async () => {
     const newAmount = Number(amount);
     if (!newAmount || newAmount <= 0) return toast.error('Enter valid amount');
+    if (!emiDueDate) return toast.error('EMI Due Date is required');
+    if (!collectedDate) return toast.error('Collection Date is required');
+    
     try {
       setBusy(true);
-      const delta = newAmount - Number(payment.amount || 0);
+      const delta = newAmount - Number(payment.amount || payment.paidAmount || 0);
       await updateOne('payments', payment.id, {
         amount: newAmount,
+        paidAmount: newAmount,
         collectedDate,
+        actualCollectionDate: collectedDate,
+        emiDueDate,
+        dueDate: emiDueDate,
         paidDate: collectedDate,
         paymentType: isAdvance ? 'Advance' : (payment.paymentType || 'Normal'),
         notes,
@@ -50,8 +57,8 @@ export default function EditPaymentModal({ payment, borrowerId, onClose, onSaved
       setBusy(true);
       await deleteOne('payments', payment.id);
       await updateOne('borrowers', borrowerId, {
-        paidAmount: increment(-Number(payment.amount || 0)),
-        pendingAmount: increment(Number(payment.amount || 0)),
+        paidAmount: increment(-Number(payment.amount || payment.paidAmount || 0)),
+        pendingAmount: increment(Number(payment.amount || payment.paidAmount || 0)),
         paymentCount: increment(-1),
         updatedAt: serverTimestamp(),
       });
@@ -68,20 +75,19 @@ export default function EditPaymentModal({ payment, borrowerId, onClose, onSaved
           <div>
             <h2 className="text-lg font-black">Edit Payment</h2>
             <p className="text-xs text-slate-500">
-              EMI Due: <b>{fmtDate(dueDate)}</b> &nbsp;•&nbsp; Originally: <b>{money(payment.amount || 0)}</b>
+              Originally: <b>{money(payment.amount || payment.paidAmount || 0)}</b>
             </p>
           </div>
           <button onClick={onClose} className="rounded-full p-1.5 hover:bg-slate-100"><X size={18} /></button>
         </div>
 
         <div className="space-y-3 p-4">
-          {/* Due date info row (read-only) */}
-          {dueDate && (
-            <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
-              <span className="text-slate-500">EMI Due Date</span>
-              <b className="text-slate-800">{fmtDate(dueDate)}</b>
-            </div>
-          )}
+          {/* EMI Due date (editable) */}
+          <div>
+            <label className="label">EMI Due Date *</label>
+            <input type="date" className="input" value={emiDueDate} onChange={(e) => setEmiDueDate(e.target.value)} required />
+            <p className="mt-1 text-xs text-slate-500">Which EMI installment this payment is for</p>
+          </div>
 
           <div>
             <label className="label">Amount Paid (₹)</label>
@@ -89,10 +95,11 @@ export default function EditPaymentModal({ payment, borrowerId, onClose, onSaved
           </div>
 
           <div>
-            <label className="label">Collection Date</label>
-            <input type="date" className="input" value={collectedDate} onChange={(e) => setCollectedDate(e.target.value)} />
+            <label className="label">Actual Collection Date *</label>
+            <input type="date" className="input" value={collectedDate} onChange={(e) => setCollectedDate(e.target.value)} required />
+            <p className="mt-1 text-xs text-slate-500">Date when payment was actually collected</p>
             {isAdvance && (
-              <p className="mt-1 text-xs font-semibold text-blue-600">Advance payment — collected before due date</p>
+              <p className="mt-1 text-xs font-semibold text-blue-600">✓ Advance payment — collected before EMI due date</p>
             )}
           </div>
 

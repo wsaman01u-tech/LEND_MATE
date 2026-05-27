@@ -27,6 +27,7 @@ const compressImage = (file) => new Promise((resolve) => {
 /** Upload borrower photo to Firebase Storage */
 export const uploadBorrowerPhoto = async (borrowerId, file) => {
   if (!isFirebaseConfigured || !storage) {
+    console.warn('Firebase not configured, using base64 fallback');
     // Fallback: convert to base64 data URL for local storage
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -35,11 +36,43 @@ export const uploadBorrowerPhoto = async (borrowerId, file) => {
     });
   }
 
-  const compressed = await compressImage(file);
-  const path = `borrowers/${borrowerId}/photo.jpg`;
-  const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, compressed, { contentType: 'image/jpeg' });
-  return getDownloadURL(storageRef);
+  try {
+    console.log('Starting photo upload for borrower:', borrowerId);
+    const compressed = await compressImage(file);
+    console.log('Image compressed successfully');
+    
+    const path = `borrowers/${borrowerId}/photo.jpg`;
+    const storageRef = ref(storage, path);
+    console.log('Storage path:', path);
+    
+    // Upload with metadata
+    await uploadBytes(storageRef, compressed, { 
+      contentType: 'image/jpeg',
+      cacheControl: 'public, max-age=31536000'
+    });
+    console.log('Upload complete, getting download URL...');
+    
+    // Get download URL with retry logic
+    let downloadURL;
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        downloadURL = await getDownloadURL(storageRef);
+        console.log('Download URL obtained:', downloadURL);
+        break;
+      } catch (err) {
+        retries--;
+        console.warn(`Failed to get download URL, retries left: ${retries}`, err);
+        if (retries === 0) throw err;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    return downloadURL;
+  } catch (error) {
+    console.error('Photo upload error:', error);
+    throw new Error('Failed to upload photo. Please try again.');
+  }
 };
 
 /** Default avatar SVG as data URL */

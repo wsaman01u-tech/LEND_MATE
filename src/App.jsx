@@ -8,10 +8,15 @@ import Borrowers from './pages/Borrowers';
 import BorrowerForm from './pages/BorrowerForm';
 import BorrowerDetails from './pages/BorrowerDetails';
 import Payments from './pages/Payments';
+import Reminders from './pages/Reminders';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
+import SetupRequired from './pages/SetupRequired';
+import { isFirebaseConfigured } from './lib/firebase';
 
 export default function App() {
+  if (!isFirebaseConfigured) return <SetupRequired />;
+
   return <Routes>
     <Route path="/login" element={<Login />} />
     <Route path="/register" element={<Register />} />
@@ -22,6 +27,7 @@ export default function App() {
       <Route path="borrowers/:id" element={<BorrowerDetails />} />
       <Route path="borrowers/:id/edit" element={<BorrowerForm />} />
       <Route path="payments" element={<Payments />} />
+      <Route path="reminders" element={<Reminders />} />
       <Route path="reports" element={<Reports />} />
       <Route path="settings" element={<Settings />} />
     </Route>

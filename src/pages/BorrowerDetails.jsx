@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, BarChart2, Calendar, CheckCircle2, ChevronDown, ChevronUp, Clock, Edit2, Image, MessageCircle, Pencil, Phone, Printer, Trash2, X, XCircle, Zap } from 'lucide-react';
+import { AlertTriangle, BarChart2, Bell, Calendar, CheckCircle2, ChevronDown, ChevronUp, Clock, Edit2, Image, MessageCircle, Pencil, Phone, Printer, Trash2, X, XCircle, Zap } from 'lucide-react';
 import PerformanceTracker from '../components/PerformanceTracker';
 import EditPaymentModal from '../components/EditPaymentModal';
+import PaymentReminder from '../components/PaymentReminder';
 import { toast } from 'react-toastify';
 import { addOne, deleteOne, getOne, increment, serverTimestamp, setOne, updateOne } from '../lib/data';
 import useRealtime from '../hooks/useRealtime';
@@ -18,6 +19,7 @@ export default function BorrowerDetails() {
   const [tab, setTab] = useState('collect');
   const [amount, setAmount] = useState('');
   const [collectedDate, setCollectedDate] = useState(todayISO());
+  const [emiDueDate, setEmiDueDate] = useState('');
   const [collectorName, setCollectorName] = useState('Admin');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -28,12 +30,25 @@ export default function BorrowerDetails() {
   const [showPerf, setShowPerf] = useState(false);
   const [editCollection, setEditCollection] = useState(null);
   const [lastCollected, setLastCollected] = useState(null);
+  const [showReminder, setShowReminder] = useState(false);
 
   const { data: slotRecords } = useRealtime('payments', { where: ['borrowerId', '==', id], orderBy: ['slotIndex', 'asc'] });
   const { data: collections } = useRealtime('collections', { where: ['borrowerId', '==', id], orderBy: ['paidAt', 'desc'] });
 
   const load = () => getOne('borrowers', id).then((b) => setBorrower(b));
-  useEffect(() => { load(); }, [id]);
+  
+  useEffect(() => { 
+    load(); 
+  }, [id]);
+  
+  // Auto-reload borrower when collections or slotRecords change (real-time refresh)
+  // Use JSON.stringify to detect actual data changes, not just length changes
+  useEffect(() => {
+    if (collections.length > 0 || slotRecords.length > 0) {
+      load();
+    }
+  }, [JSON.stringify(collections.map(c => c.id + c.totalCollected + c.collectedDate)), 
+      JSON.stringify(slotRecords.map(s => s.id + s.paidAmount + s.collectedDate))]);
 
   if (!borrower) return <div className="skeleton h-96" />;
 
@@ -52,57 +67,81 @@ export default function BorrowerDetails() {
   const collectPayment = async () => {
     const amt = Math.round(Number(amount));
     if (!amt || amt <= 0) return toast.error('Enter valid amount');
+    
+    // Validate EMI Due Date is selected
+    if (!emiDueDate) return toast.error('Please select EMI Due Date');
+    
     // Block collection before loan start date
     if (borrower.startDate && collectedDate < borrower.startDate)
       return toast.error(`Cannot collect before loan start date (${fmtDate(borrower.startDate)})`);
-    // Allow same-day top-up (partial → full), but block exact duplicate amount+date
-    const exactDupe = collections.some((c) => c.collectedDate === collectedDate && c.totalCollected === amt);
-    if (exactDupe) return toast.error(`Identical payment already recorded on ${fmtDate(collectedDate)}.`);
+    
     if (busy) return;
     setBusy(true);
+    
     try {
-      // Record the collection
+      // Reload to get latest collections
+      await load();
+      
+      // Check for duplicate payment on same EMI due date (not collection date)
+      const sameDueDatePayment = slotRecords.some((s) => s.dueDate === emiDueDate && s.paidAmount > 0);
+      if (sameDueDatePayment) {
+        toast.error(`Payment already recorded for EMI due on ${fmtDate(emiDueDate)}. Choose a different EMI date.`);
+        setBusy(false);
+        return;
+      }
+      
+      // Find the slot by matching the selected EMI due date
+      const targetSlot = schedule.find((s) => s.dueDate === emiDueDate);
+      
+      if (!targetSlot) {
+        toast.error(`No EMI slot found for due date ${fmtDate(emiDueDate)}`);
+        setBusy(false);
+        return;
+      }
+      
+      // Record the collection with both dates
       await addOne('collections', {
         borrowerId: id, borrowerName: borrower.fullName,
-        totalCollected: amt, collectedDate, collectorName,
-        notes: notes || '', paidAt: serverTimestamp(),
+        totalCollected: amt, 
+        collectedDate: collectedDate, // Actual collection date (today)
+        emiDueDate: emiDueDate, // EMI due date (can be future)
+        collectorName,
+        notes: notes || '', 
+        paidAt: serverTimestamp(),
       });
-      // Find the slot to assign this payment to:
-      // Rule: the slot whose dueDate is closest to (and ≤) collectedDate that is not yet fully paid.
-      // This means if you skip 29 and pay on 30 → slot 29 stays missed, slot 30 gets paid.
-      // Special: if there's already a partial on a slot, top that up first.
-      const partialSlot = schedule.find((s) => s.isPartial && s.dueDate <= collectedDate);
-      const exactSlot = schedule.find((s) => !s.isFullyPaid && s.dueDate === collectedDate);
-      const closestPastSlot = [...schedule]
-        .filter((s) => !s.isFullyPaid && s.dueDate < collectedDate)
-        .sort((a, b) => b.dueDate.localeCompare(a.dueDate))[0]; // latest past-due unpaid
-      const futureSlot = schedule.find((s) => !s.isFullyPaid && s.dueDate > collectedDate);
-      const unpaidSlot = partialSlot || exactSlot || closestPastSlot || futureSlot;
-      if (unpaidSlot) {
-        const newSlotPaid = (unpaidSlot.paidAmount || 0) + amt;
-        await setOne('payments', `${id}_slot_${unpaidSlot.slotIndex}`, {
-          borrowerId: id, borrowerName: borrower.fullName,
-          slotIndex: unpaidSlot.slotIndex,
-          dueDate: unpaidSlot.dueDate,
-          emiAmount: unpaidSlot.emiAmount,
-          paidAmount: newSlotPaid,
-          collectedDate,
-          paymentType: newSlotPaid >= unpaidSlot.emiAmount ? 'Paid' : 'Partial',
-          notes: notes || '',
-          paidAt: serverTimestamp(),
-        });
-      }
+      
+      // Create/update payment record for the selected slot
+      await setOne('payments', `${id}_slot_${targetSlot.slotIndex}`, {
+        borrowerId: id, borrowerName: borrower.fullName,
+        slotIndex: targetSlot.slotIndex,
+        dueDate: emiDueDate, // EMI due date
+        emiAmount: targetSlot.emiAmount,
+        paidAmount: amt, // Store payment amount
+        collectedDate: collectedDate, // Actual collection date
+        actualCollectionDate: collectedDate, // Store separately for clarity
+        paymentType: amt >= targetSlot.emiAmount ? 'Paid' : 'Partial',
+        notes: notes || '',
+        paidAt: serverTimestamp(),
+      });
+      
+      // Update borrower totals
       const newPending = totalPending - amt;
+      const newStatus = newPending < 0 ? 'Overpaid' : borrower.status || 'Active';
       await updateOne('borrowers', id, {
         paidAmount: increment(amt), pendingAmount: newPending,
-        status: newPending < 0 ? 'Overpaid' : borrower.status || 'Active',
+        status: newStatus,
         updatedAt: serverTimestamp(),
       });
-      toast.success(`Collected ${money(amt)}`);
-      setLastCollected({ amt, date: collectedDate, remaining: newPending });
-      setAmount(''); setNotes(''); setCollectedDate(todayISO());
-      load();
-    } catch (e) { toast.error(e.message); }
+      
+      toast.success(`Collected ${money(amt)} for EMI due ${fmtDate(emiDueDate)}`);
+      setLastCollected({ amt, date: collectedDate, emiDueDate, remaining: newPending });
+      setAmount(''); setNotes(''); setCollectedDate(todayISO()); setEmiDueDate('');
+      // No need to call load() - useEffect will auto-refresh when collections update
+    } catch (e) { 
+      console.error('Collection error:', e);
+      toast.error(e.message); 
+    }
+    
     setBusy(false);
   };
 
@@ -167,14 +206,31 @@ export default function BorrowerDetails() {
   const handlePhotoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+    
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image size must be less than 5MB');
+      return;
+    }
+    
     setPhotoUploading(true);
     try {
       const url = await uploadBorrowerPhoto(id, file);
       await updateOne('borrowers', id, { photoUrl: url, updatedAt: serverTimestamp() });
-      toast.success('Photo updated');
+      toast.success('Photo updated successfully');
       load();
-    } catch (err) { toast.error('Photo upload failed'); }
-    setPhotoUploading(false);
+    } catch (err) {
+      console.error('Photo upload error:', err);
+      toast.error(err.message || 'Photo upload failed. Please try again.');
+    } finally {
+      setPhotoUploading(false);
+    }
   };
 
   const remove = async () => {
@@ -189,7 +245,17 @@ export default function BorrowerDetails() {
       <div className="card space-y-3">
         <div className="flex items-start gap-3">
           <div className="relative shrink-0">
-            <img src={photoUrl} alt="" className="h-14 w-14 rounded-2xl object-cover border border-slate-200" />
+            <img 
+              src={photoUrl} 
+              alt={borrower.fullName} 
+              className="h-14 w-14 rounded-2xl object-cover border border-slate-200"
+              onError={(e) => {
+                // Fallback to default avatar if image fails to load
+                if (e.target.src !== defaultAvatar) {
+                  e.target.src = defaultAvatar;
+                }
+              }}
+            />
             <label className="absolute -bottom-1 -right-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-primary-600 text-white shadow-md hover:bg-primary-700">
               <Image size={11} />
               <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} disabled={photoUploading} />
@@ -202,6 +268,9 @@ export default function BorrowerDetails() {
             </div>
             <div className="flex items-center gap-2 mt-1">
               <a href={`tel:${borrower.phone}`} className="flex items-center gap-1 text-sm text-primary-700"><Phone size={13} /> {borrower.phone}</a>
+              <button onClick={() => setShowReminder(true)} className="flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-0.5 text-xs font-bold text-amber-700 hover:bg-amber-100">
+                <Bell size={12} /> Remind
+              </button>
               <button onClick={() => openWhatsApp(borrower.phone, whatsappReminder(borrower))} className="flex items-center gap-1 rounded-lg bg-green-50 px-2 py-0.5 text-xs font-bold text-green-700 hover:bg-green-100">
                 <MessageCircle size={12} /> WhatsApp
               </button>
@@ -276,15 +345,28 @@ export default function BorrowerDetails() {
               <input className="input" inputMode="numeric" placeholder="Enter amount" value={amount} onChange={(e) => setAmount(e.target.value)} />
             </div>
             <div>
-              <label className="label">Collection Date</label>
+              <label className="label">EMI Due Date *</label>
+              <select className="input" value={emiDueDate} onChange={(e) => setEmiDueDate(e.target.value)} required>
+                <option value="">Select EMI Due Date</option>
+                {schedule.filter(s => !s.isFullyPaid).map((s) => (
+                  <option key={s.slotIndex} value={s.dueDate}>
+                    {fmtDate(s.dueDate)} - EMI #{s.no} ({s.paidAmount > 0 ? `Partial: ${money(s.paidAmount)}/${money(s.emiAmount)}` : money(s.emiAmount)})
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500 mt-1">Select which EMI installment this payment is for</p>
+            </div>
+            <div>
+              <label className="label">Actual Collection Date</label>
               <input type="date" className="input" value={collectedDate} onChange={(e) => setCollectedDate(e.target.value)} />
+              <p className="text-xs text-slate-500 mt-1">Date when payment was actually collected (today: {fmtDate(todayISO())})</p>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div><label className="label">Notes</label><input className="input" placeholder="Optional" value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
               <div><label className="label">Collector</label><input className="input" value={collectorName} onChange={(e) => setCollectorName(e.target.value)} /></div>
             </div>
 
-            <button onClick={collectPayment} disabled={!amount || totalPending <= 0 || busy} className="btn-primary w-full disabled:opacity-40">
+            <button onClick={collectPayment} disabled={!amount || busy || borrower.status === 'Completed' || borrower.status === 'Closed'} className="btn-primary w-full disabled:opacity-40">
               {busy ? 'Processing...' : <><Zap size={15} /> Collect {money(Number(amount) || 0)}</>}
             </button>
 
@@ -295,12 +377,12 @@ export default function BorrowerDetails() {
                   <p className="text-sm font-black text-green-800">✓ Payment Collected!</p>
                   <button onClick={() => setLastCollected(null)} className="text-green-600 hover:text-green-800"><X size={14} /></button>
                 </div>
-                <div className="flex gap-1.5 text-xs text-green-700">
-                  <span>₹{lastCollected.amt.toLocaleString('en-IN')}</span>
-                  <span>•</span>
-                  <span>Balance: ₹{lastCollected.remaining.toLocaleString('en-IN')}</span>
-                  <span>•</span>
-                  <span>{borrower.phone}</span>
+                <div className="space-y-1 text-xs text-green-700">
+                  <p><span className="font-semibold">Amount:</span> ₹{lastCollected.amt.toLocaleString('en-IN')}</p>
+                  <p><span className="font-semibold">Collected on:</span> {fmtDate(lastCollected.date)}</p>
+                  <p><span className="font-semibold">EMI Due Date:</span> {fmtDate(lastCollected.emiDueDate)}</p>
+                  <p><span className="font-semibold">Balance:</span> ₹{lastCollected.remaining.toLocaleString('en-IN')}</p>
+                  <p><span className="font-semibold">Phone:</span> {borrower.phone}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -498,8 +580,18 @@ export default function BorrowerDetails() {
               <div className="flex items-center justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <p className="font-black text-slate-800 text-base">{money(c.totalCollected)}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{fmtDate(c.collectedDate)} &nbsp;•&nbsp; {c.collectorName || 'Admin'}</p>
-                  {c.notes && <p className="text-xs italic text-slate-400 mt-0.5">{c.notes}</p>}
+                  <div className="mt-1 space-y-0.5">
+                    <p className="text-xs text-slate-500">
+                      <span className="font-semibold">Collected on:</span> {fmtDate(c.collectedDate)}
+                    </p>
+                    {c.emiDueDate && (
+                      <p className="text-xs text-primary-600">
+                        <span className="font-semibold">EMI Due Date:</span> {fmtDate(c.emiDueDate)}
+                      </p>
+                    )}
+                    <p className="text-xs text-slate-400">{c.collectorName || 'Admin'}</p>
+                  </div>
+                  {c.notes && <p className="text-xs italic text-slate-400 mt-1">{c.notes}</p>}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button onClick={() => { const html = generateReceiptHTML({ borrower, amount: c.totalCollected, date: fmtDate(c.collectedDate), remaining: Math.max(0, totalPending), collectorName: c.collectorName }); printReceipt(html); }}
@@ -592,6 +684,9 @@ export default function BorrowerDetails() {
           </div>
         </div>
       )}
+
+      {/* ── Payment Reminder Modal ── */}
+      {showReminder && <PaymentReminder borrower={borrower} onClose={() => setShowReminder(false)} />}
     </div>
   );
 }
@@ -671,7 +766,14 @@ function SlotCard({ slot, borrowerId, borrower, onRefresh }) {
           style={{ width: `${pct}%` }} />
       </div>
       {slot.collectedDate && (
-        <p className="mt-1 text-[11px] text-slate-400">Collected: {fmtDate(slot.collectedDate)}</p>
+        <div className="mt-1 space-y-0.5">
+          <p className="text-[11px] text-slate-500">
+            <span className="font-semibold">EMI Due:</span> {fmtDate(slot.dueDate)}
+          </p>
+          <p className="text-[11px] text-green-600 font-semibold">
+            <span className="font-semibold">Collected:</span> {fmtDate(slot.collectedDate)}
+          </p>
+        </div>
       )}
 
       {/* Edit form */}

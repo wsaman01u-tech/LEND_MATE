@@ -13,3 +13,78 @@ body { @apply bg-slate-50 text-slate-900 antialiased; }
 .badge { @apply rounded-full px-2.5 py-1 text-xs font-semibold; }
 .skeleton { @apply animate-pulse rounded-xl bg-slate-100; }
 @media print { .no-print { display: none !important; } body { background: white; } .print-card { box-shadow: none !important; border: 1px solid #e2e8f0; } }
+
+/* Custom Time Picker Styles */
+.react-time-picker {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 2px solid #e2e8f0;
+  padding: 0.5rem 0.75rem;
+}
+.react-time-picker:focus-within {
+  border-color: #6366f1;
+}
+.react-time-picker__wrapper {
+  border: 0;
+}
+.react-time-picker__inputGroup {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.react-time-picker__button {
+  padding: 0.25rem;
+}
+.react-time-picker__clock {
+  border-radius: 0.75rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  border: 2px solid #e2e8f0;
+}
+.react-clock {
+  border-radius: 0.75rem;
+}
+.react-clock__face {
+  border: 2px solid #e2e8f0;
+}
+.react-clock__hand__body {
+  background-color: #6366f1;
+}
+.react-clock__mark__body {
+  background-color: #cbd5e1;
+}
+.react-clock__hand__body--hour {
+  background-color: #4f46e5;
+}
+.react-clock__hand__body--second {
+  background-color: #ef4444;
+}
+.react-clock__mark__number {
+  color: #334155;
+  font-weight: 600;
+}
+
+/* Custom Animations for Priority Reminders */
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes wiggle {
+  0%, 100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-wiggle {
+  animation: wiggle 1s ease-in-out infinite;
+}

@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { Eye, MessageCircle, Pencil, Phone, Plus, Search, Trash2 } from 'lucide-react';
+import { Bell, Eye, MessageCircle, Pencil, Phone, Plus, Search, Trash2 } from 'lucide-react';
 import { deleteOne } from '../lib/data';
 import useRealtime from '../hooks/useRealtime';
 import EmptyState from '../components/EmptyState';
 import { borrowerStatus, money, openWhatsApp, whatsappReminder } from '../lib/finance';
 import { defaultAvatar } from '../lib/photos';
+import PaymentReminder from '../components/PaymentReminder';
 
 const statusStyle = (s) => s === 'Completed' ? 'bg-green-50 text-green-700' : s === 'Overdue' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700';
 
@@ -92,11 +93,16 @@ export default function Borrowers() {
 }
 
 function ActionButtons({ id, phone, borrower, onDelete }) {
+  const [showReminder, setShowReminder] = useState(false);
   const base = 'inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold transition';
-  return <div className="flex flex-wrap items-center gap-2">
-    <Link to={`/borrowers/${id}`} title="View" className={`${base} bg-primary-50 text-primary-700 hover:bg-primary-100`}><Eye size={14} /> View</Link>
-    <button onClick={() => openWhatsApp(phone, whatsappReminder(borrower))} title="WhatsApp" className={`${base} bg-green-50 text-green-700 hover:bg-green-100`}><MessageCircle size={14} /> WhatsApp</button>
-    <Link to={`/borrowers/${id}/edit`} title="Edit" className={`${base} bg-slate-100 text-slate-700 hover:bg-slate-200`}><Pencil size={14} /> Edit</Link>
-    <button onClick={onDelete} title="Delete" className={`${base} bg-red-50 text-red-600 hover:bg-red-100`}><Trash2 size={14} /> Delete</button>
-  </div>;
+  return <>
+    <div className="flex flex-wrap items-center gap-2">
+      <Link to={`/borrowers/${id}`} title="View" className={`${base} bg-primary-50 text-primary-700 hover:bg-primary-100`}><Eye size={14} /> View</Link>
+      <button onClick={() => setShowReminder(true)} title="Set Reminder" className={`${base} bg-amber-50 text-amber-700 hover:bg-amber-100`}><Bell size={14} /> Remind</button>
+      <button onClick={() => openWhatsApp(phone, whatsappReminder(borrower))} title="WhatsApp" className={`${base} bg-green-50 text-green-700 hover:bg-green-100`}><MessageCircle size={14} /> WhatsApp</button>
+      <Link to={`/borrowers/${id}/edit`} title="Edit" className={`${base} bg-slate-100 text-slate-700 hover:bg-slate-200`}><Pencil size={14} /> Edit</Link>
+      <button onClick={onDelete} title="Delete" className={`${base} bg-red-50 text-red-600 hover:bg-red-100`}><Trash2 size={14} /> Delete</button>
+    </div>
+    {showReminder && <PaymentReminder borrower={borrower} onClose={() => setShowReminder(false)} />}
+  </>;
 }

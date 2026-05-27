@@ -19,12 +19,28 @@ export function AuthProvider({ children }) {
       return;
     }
     return onAuthStateChanged(auth, async (current) => {
-      setUser(current);
-      if (current) {
-        const snap = await getDoc(doc(db, 'users', current.uid));
-        setProfile(snap.exists() ? snap.data() : null);
-      } else setProfile(null);
-      setLoading(false);
+      try {
+        setUser(current);
+        if (current) {
+          try {
+            const snap = await getDoc(doc(db, 'users', current.uid));
+            setProfile(snap.exists() ? snap.data() : {
+              name: current.displayName || current.email || 'Admin',
+              email: current.email || '',
+            });
+          } catch (error) {
+            console.warn('Failed to load user profile:', error);
+            setProfile({
+              name: current.displayName || current.email || 'Admin',
+              email: current.email || '',
+            });
+          }
+        } else {
+          setProfile(null);
+        }
+      } finally {
+        setLoading(false);
+      }
     });
   }, []);
 

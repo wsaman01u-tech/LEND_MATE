@@ -10,8 +10,8 @@ import { defaultAvatar } from '../lib/photos';
 import { generateReceiptHTML, shareReceiptAsImage } from '../lib/reports';
 
 const isDueToday = (b, todayStr) => {
-  if (borrowerStatus(b) === 'Completed') return false;
-  if (!b.startDate || Number(b.pendingAmount || 0) <= 0) return false;
+  if (borrowerStatus(b) === 'Completed' || b.status === 'Closed') return false;
+  if (!b.startDate) return false;
   const step = stepDays(b.financeType || 'Daily');
   const duration = Number(b.duration || 0);
   const lastDue = duration > 0 ? addDays(b.startDate, (duration - 1) * step) : b.startDate;
@@ -64,8 +64,9 @@ export default function Dashboard() {
   const quickCollect = async (b) => {
     const emi = Number(b.emi || 0);
     const pending = Number(b.pendingAmount || 0);
-    if (emi <= 0 || pending <= 0) return;
-    const amt = Math.min(emi, pending);
+    // Allow collection even if pending <= 0, unless loan is manually closed
+    if (emi <= 0 || b.status === 'Completed' || b.status === 'Closed') return;
+    const amt = Math.min(emi, Math.abs(pending) || emi);
     try {
       await addOne('collections', {
         borrowerId: b.id, borrowerName: b.fullName,
@@ -73,7 +74,7 @@ export default function Dashboard() {
         collectorName: 'Admin', notes: 'Quick collect',
         paidAt: serverTimestamp(),
       });
-      const newPending = Math.max(0, pending - amt);
+      const newPending = pending - amt;
       await updateOne('borrowers', b.id, {
         paidAmount: increment(amt), pendingAmount: newPending,
         updatedAt: serverTimestamp(),

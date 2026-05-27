@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lendmate-v1';
+const CACHE_NAME = 'lendmate-v2';
 const OFFLINE_URL = '/';
 
 // Files to pre-cache on install
@@ -35,6 +35,14 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
+  // Network-first for navigations so redeploys always get the latest app shell.
+  if (request.mode === 'navigate') {
+    e.respondWith(
+      fetch(request).catch(() => caches.match(OFFLINE_URL))
+    );
+    return;
+  }
+
   // Cache-first for static assets (JS, CSS, images)
   e.respondWith(
     caches.match(request).then((cached) => {
@@ -46,13 +54,7 @@ self.addEventListener('fetch', (e) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         }
         return response;
-      }).catch(() => {
-        // If both cache and network fail, return the offline page for navigation
-        if (request.mode === 'navigate') {
-          return caches.match(OFFLINE_URL);
-        }
-        return new Response('Offline', { status: 503 });
-      });
+      }).catch(() => new Response('Offline', { status: 503 }));
     })
   );
 });
